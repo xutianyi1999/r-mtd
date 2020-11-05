@@ -72,15 +72,7 @@ async fn download(uri: Uri,
                   begin_index: usize, end_index: usize,
                   client: Client<HttpsConnector<HttpConnector>>,
                   pb: ProgressBar) -> Result<()> {
-    let req = Request::builder()
-        .method(Method::GET)
-        .uri(uri)
-        .header("User-agent", USER_AGENT)
-        .header("Range", format!("bytes={}-{}", begin_index, end_index - 1))
-        .body(Body::empty())
-        .res_auto_convert()?;
-
-    let mut res = client.request(req).await.res_auto_convert()?;
+    let mut count = 0;
 
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
@@ -90,18 +82,36 @@ async fn download(uri: Uri,
 
     file.seek(SeekFrom::Start(begin_index as u64)).await?;
 
-    let mut count = 0;
+    loop {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(uri.clone())
+            .header("User-agent", USER_AGENT)
+            .header("Range", format!("bytes={}-{}", begin_index + count, end_index - 1))
+            .body(Body::empty())
+            .res_auto_convert()?;
 
-    while let Some(next) = res.data().await {
-        let chunk = next.res_auto_convert()?;
-        file.write_all(&chunk).await?;
+        let mut res = client.request(req).await.res_auto_convert()?;
 
-        count += chunk.len();
-        pb.set_position(count as u64);
+        loop {
+            match res.data().await {
+                Some(next) => {
+                    let chunk = match next {
+                        Ok(buff) => buff,
+                        Err(_) => break
+                    };
+                    file.write_all(&chunk).await?;
+
+                    count += chunk.len();
+                    pb.set_position(count as u64);
+                }
+                None => {
+                    pb.finish_with_message("done");
+                    return Ok(());
+                }
+            }
+        }
     }
-
-    pb.finish_with_message("done");
-    Ok(())
 }
 
 async fn get_file_len(uri: Uri, client: &Client<HttpsConnector<HttpConnector>>) -> Result<usize> {
