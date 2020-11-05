@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn total_count_draw(pb: ProgressBar, file_len: u64) {
+fn total_count_draw(pb: ProgressBar, file_len: u64) {
     tokio::spawn(async move {
         let mut interval = time::interval(time::Duration::from_millis(500));
 
@@ -93,6 +93,7 @@ async fn total_count_draw(pb: ProgressBar, file_len: u64) {
             let total_count = TOTAL_COUNT.load(Ordering::SeqCst);
 
             if total_count >= file_len {
+                pb.finish_with_message("done");
                 return;
             } else {
                 pb.set_position(total_count);
@@ -138,8 +139,9 @@ async fn download(uri: Uri,
                     };
                     file.write_all(&chunk).await?;
 
-                    count += chunk.len();
-                    TOTAL_COUNT.fetch_add(chunk.len() as u64, Ordering::SeqCst);
+                    let len = chunk.len() as u64;
+                    count += len;
+                    TOTAL_COUNT.fetch_add(len, Ordering::SeqCst);
                     pb.set_position(count);
                 }
                 None => {
