@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
         .build::<_, hyper::Body>(https);
 
     let file_len = get_file_len(uri.clone(), &client).await?;
-    println!("File total size: {}", file_len);
+    println!("File total size: {} MB", file_len / (1024 * 1024));
     let block = file_len / count;
 
     let multi_progress = MultiProgress::new();
