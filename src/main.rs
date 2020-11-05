@@ -6,6 +6,7 @@ use hyper::{Body, body::HttpBody as _, Client, Method, Uri};
 use hyper::client::HttpConnector;
 use hyper::Request;
 use hyper_tls::HttpsConnector;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::io::{AsyncWriteExt, Result};
 
 use crate::commons::{OptionConvert, StdResAutoConvert};
@@ -24,7 +25,7 @@ async fn main() -> Result<()> {
     let target = args.next().option_to_res("Command error")?;
 
     let path = std::path::Path::new(&target);
-    let file_name = path.file_name().option_to_res("Parse error")?.to_str().option_to_res("Parse error")?;
+    let file_name = path.file_name().option_to_res("File name Parse error")?.to_str().option_to_res("File name Parse error")?;
     let uri = Uri::from_str(&target).res_auto_convert()?;
 
     let https = HttpsConnector::new();
@@ -33,7 +34,13 @@ async fn main() -> Result<()> {
 
     let file_len = get_file_len(uri.clone(), &client).await?;
     let block = file_len / count;
-    let mut future_list = Vec::with_capacity(count + 1);
+
+    let multi_progress = MultiProgress::new();
+    let style = ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .progress_chars("#>-");
+
+    let mut future_list = Vec::with_capacity(count);
 
     for i in 0..count {
         let begin_index = i * block;
@@ -43,10 +50,14 @@ async fn main() -> Result<()> {
             (i + 1) * block
         };
 
+        let pb = multi_progress.add(ProgressBar::new((end_index - begin_index) as u64));
+        pb.set_style(style.clone());
+
         let future = download(uri.clone(),
                               file_name.to_string(),
                               begin_index, end_index,
-                              client.clone());
+                              client.clone(),
+                              pb);
         future_list.push(future);
     }
 
@@ -57,7 +68,8 @@ async fn main() -> Result<()> {
 async fn download(uri: Uri,
                   file_name: String,
                   begin_index: usize, end_index: usize,
-                  client: Client<HttpsConnector<HttpConnector>>) -> Result<()> {
+                  client: Client<HttpsConnector<HttpConnector>>,
+                  pb: ProgressBar) -> Result<()> {
     let req = Request::builder()
         .method(Method::GET)
         .uri(uri)
@@ -79,6 +91,7 @@ async fn download(uri: Uri,
     while let Some(next) = res.data().await {
         let chunk = next.res_auto_convert()?;
         file.write_all(&chunk).await?;
+        pb.set_position(chunk.len() as u64);
     }
     Ok(())
 }
