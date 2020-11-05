@@ -1,6 +1,7 @@
 use std::io::SeekFrom;
 use std::result::Result::Ok;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyper::{Body, body::HttpBody as _, Client, Method, Uri};
 use hyper::client::HttpConnector;
@@ -9,12 +10,14 @@ use hyper_tls::HttpsConnector;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::io::{AsyncWriteExt, Result};
 use tokio::io::BufWriter;
+use tokio::time;
 
 use crate::commons::{OptionConvert, StdResAutoConvert};
 
 mod commons;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.103 Safari/537.36";
+static TOTAL_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,7 +25,7 @@ async fn main() -> Result<()> {
     args.next();
 
     let count = args.next().option_to_res("Command error")?;
-    let count = usize::from_str(&count).res_auto_convert()?;
+    let count = u64::from_str(&count).res_auto_convert()?;
     let target = args.next().option_to_res("Command error")?;
 
     let file_name = match args.next() {
@@ -44,11 +47,19 @@ async fn main() -> Result<()> {
     let block = file_len / count;
 
     let multi_progress = MultiProgress::new();
-    let style = ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-        .progress_chars("#>-");
 
-    let mut future_list = Vec::with_capacity(count);
+    let pb = multi_progress.add(ProgressBar::new(file_len));
+    let style = ProgressStyle::default_bar()
+        .template("[{bar:80.while/white}] {bytes}/{total_bytes} {bytes_per_sec} [{elapsed_precise}]")
+        .progress_chars("#>-");
+    pb.set_style(style);
+    total_count_draw(pb, file_len);
+
+    let mut future_list = Vec::with_capacity(count as usize);
+
+    let style = ProgressStyle::default_bar()
+        .template("[{bar:40.cyan/blue}] {bytes}/{total_bytes} {bytes_per_sec} ({eta})")
+        .progress_chars("#>-");
 
     for i in 0..count {
         let begin_index = i * block;
@@ -58,7 +69,7 @@ async fn main() -> Result<()> {
             (i + 1) * block
         };
 
-        let pb = multi_progress.add(ProgressBar::new((end_index - begin_index) as u64));
+        let pb = multi_progress.add(ProgressBar::new(end_index - begin_index));
         pb.set_style(style.clone());
 
         let future = download(uri.clone(),
@@ -74,9 +85,26 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn total_count_draw(pb: ProgressBar, file_len: u64) {
+    tokio::spawn(async move {
+        let mut interval = time::interval(time::Duration::from_millis(500));
+
+        loop {
+            let total_count = TOTAL_COUNT.load(Ordering::SeqCst);
+
+            if total_count >= file_len {
+                return;
+            } else {
+                pb.set_position(total_count);
+            }
+            interval.tick().await;
+        }
+    });
+}
+
 async fn download(uri: Uri,
                   file_name: String,
-                  begin_index: usize, end_index: usize,
+                  begin_index: u64, end_index: u64,
                   client: Client<HttpsConnector<HttpConnector>>,
                   pb: ProgressBar) -> Result<()> {
     let mut count = 0;
@@ -87,7 +115,7 @@ async fn download(uri: Uri,
         .open(file_name)
         .await?;
 
-    file.seek(SeekFrom::Start(begin_index as u64)).await?;
+    file.seek(SeekFrom::Start(begin_index)).await?;
     let mut file = BufWriter::new(file);
 
     loop {
@@ -111,7 +139,8 @@ async fn download(uri: Uri,
                     file.write_all(&chunk).await?;
 
                     count += chunk.len();
-                    pb.set_position(count as u64);
+                    TOTAL_COUNT.fetch_add(chunk.len() as u64, Ordering::SeqCst);
+                    pb.set_position(count);
                 }
                 None => {
                     file.flush().await?;
@@ -123,7 +152,7 @@ async fn download(uri: Uri,
     }
 }
 
-async fn get_file_len(uri: Uri, client: &Client<HttpsConnector<HttpConnector>>) -> Result<usize> {
+async fn get_file_len(uri: Uri, client: &Client<HttpsConnector<HttpConnector>>) -> Result<u64> {
     let req = Request::builder()
         .method(Method::GET)
         .uri(uri)
@@ -134,7 +163,7 @@ async fn get_file_len(uri: Uri, client: &Client<HttpsConnector<HttpConnector>>) 
     let res = client.request(req).await.res_auto_convert()?;
     let headers = res.headers();
     let len = headers.get("content-length").option_to_res("Get file size error")?;
-    let len = usize::from_str(len.to_str().res_auto_convert()?).res_auto_convert()?;
+    let len = u64::from_str(len.to_str().res_auto_convert()?).res_auto_convert()?;
 
     Ok(len)
 }
