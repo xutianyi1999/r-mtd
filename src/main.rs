@@ -8,6 +8,7 @@ use hyper::Request;
 use hyper_tls::HttpsConnector;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::io::{AsyncWriteExt, Result};
+use tokio::io::BufWriter;
 
 use crate::commons::{OptionConvert, StdResAutoConvert};
 
@@ -24,8 +25,14 @@ async fn main() -> Result<()> {
     let count = usize::from_str(&count).res_auto_convert()?;
     let target = args.next().option_to_res("Command error")?;
 
-    let path = std::path::Path::new(&target);
-    let file_name = path.file_name().option_to_res("File name Parse error")?.to_str().option_to_res("File name Parse error")?;
+    let file_name = match args.next() {
+        Some(file_name) => file_name,
+        None => {
+            let path = std::path::Path::new(&target);
+            path.file_name().option_to_res("File name Parse error")?.to_str().option_to_res("File name Parse error")?.to_string()
+        }
+    };
+
     let uri = Uri::from_str(&target).res_auto_convert()?;
 
     let https = HttpsConnector::new();
@@ -81,6 +88,7 @@ async fn download(uri: Uri,
         .await?;
 
     file.seek(SeekFrom::Start(begin_index as u64)).await?;
+    let mut file = BufWriter::new(file);
 
     loop {
         let req = Request::builder()
@@ -106,6 +114,7 @@ async fn download(uri: Uri,
                     pb.set_position(count as u64);
                 }
                 None => {
+                    file.flush().await?;
                     pb.finish_with_message("done");
                     return Ok(());
                 }
