@@ -61,6 +61,7 @@ async fn main() -> Result<()> {
         future_list.push(future);
     }
 
+    tokio::task::spawn_blocking(move || multi_progress.join_and_clear());
     futures::future::try_join_all(future_list).await?;
     Ok(())
 }
@@ -88,11 +89,17 @@ async fn download(uri: Uri,
 
     file.seek(SeekFrom::Start(begin_index as u64)).await?;
 
+    let mut count = 0;
+
     while let Some(next) = res.data().await {
         let chunk = next.res_auto_convert()?;
         file.write_all(&chunk).await?;
-        pb.set_position(chunk.len() as u64);
+
+        count += chunk.len();
+        pb.set_position(count as u64);
     }
+
+    pb.finish_with_message("done");
     Ok(())
 }
 
