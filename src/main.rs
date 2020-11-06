@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
 
     let pb = multi_progress.add(ProgressBar::new(file_len));
     let style = ProgressStyle::default_bar()
-        .template("[{bar:80.while/white}] {bytes}/{total_bytes} {bytes_per_sec} [{elapsed_precise}]")
+        .template("[{bar:40.while/white}] {bytes}/{total_bytes} {bytes_per_sec} [{elapsed_precise}]")
         .progress_chars("#>-");
     pb.set_style(style);
     total_count_draw(pb, file_len);
