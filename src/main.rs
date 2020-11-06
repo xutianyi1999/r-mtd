@@ -43,23 +43,18 @@ async fn main() -> Result<()> {
         .build::<_, hyper::Body>(https);
 
     let file_len = get_file_len(uri.clone(), &client).await?;
-    println!("File total size: {} MB", file_len / (1024 * 1024));
     let block = file_len / count;
 
     let multi_progress = MultiProgress::new();
 
     let pb = multi_progress.add(ProgressBar::new(file_len));
     let style = ProgressStyle::default_bar()
-        .template("[{bar:40.while/white}] {bytes}/{total_bytes} {bytes_per_sec} [{elapsed_precise}]")
+        .template("[{elapsed_precise}] TOTAL   [{bar:40.while/white}] [{bytes}/{total_bytes}] [{bytes_per_sec}]")
         .progress_chars("#>-");
     pb.set_style(style);
     total_count_draw(pb, file_len);
 
     let mut future_list = Vec::with_capacity(count as usize);
-
-    let style = ProgressStyle::default_bar()
-        .template("[{bar:40.cyan/blue}] {bytes}/{total_bytes} {bytes_per_sec} ({eta})")
-        .progress_chars("#>-");
 
     for i in 0..count {
         let begin_index = i * block;
@@ -70,7 +65,16 @@ async fn main() -> Result<()> {
         };
 
         let pb = multi_progress.add(ProgressBar::new(end_index - begin_index));
-        pb.set_style(style.clone());
+
+        let head = "[{elapsed_precise}] ";
+        let mut template = format!("SLICE-{} ", i);
+        template.insert_str(0, head);
+        template.push_str("[{bar:40.cyan/blue}] [{bytes}/{total_bytes}] [{bytes_per_sec}]");
+
+        let style = ProgressStyle::default_bar()
+            .template(&template)
+            .progress_chars("#>-");
+        pb.set_style(style);
 
         let future = download(uri.clone(),
                               file_name.to_string(),
