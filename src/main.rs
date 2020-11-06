@@ -64,27 +64,37 @@ async fn main() -> Result<()> {
             (i + 1) * block
         };
 
-        let pb = multi_progress.add(ProgressBar::new(end_index - begin_index));
+        let op = if count > 50 {
+            Option::None
+        } else {
+            let head = "[{elapsed_precise}] ";
+            let mut template = format!("SLICE-{} ", i);
+            template.insert_str(0, head);
+            template.push_str("[{bar:40.cyan/blue}] [{bytes}/{total_bytes}] [{bytes_per_sec}]");
 
-        let head = "[{elapsed_precise}] ";
-        let mut template = format!("SLICE-{} ", i);
-        template.insert_str(0, head);
-        template.push_str("[{bar:40.cyan/blue}] [{bytes}/{total_bytes}] [{bytes_per_sec}]");
+            let style = ProgressStyle::default_bar()
+                .template(&template)
+                .progress_chars("#>-");
 
-        let style = ProgressStyle::default_bar()
-            .template(&template)
-            .progress_chars("#>-");
-        pb.set_style(style);
+            let pb = multi_progress.add(ProgressBar::new(end_index - begin_index));
+            pb.set_style(style);
+            Option::Some(pb)
+        };
 
         let future = download(uri.clone(),
                               file_name.to_string(),
                               begin_index, end_index,
                               client.clone(),
-                              pb);
+                              op);
         future_list.push(future);
     }
 
-    tokio::task::spawn_blocking(move || multi_progress.join_and_clear());
+    tokio::task::spawn_blocking(move || {
+        match multi_progress.join_and_clear() {
+            Err(e) => println!("Err: {}", e.to_string()),
+            Ok(()) => println!("Done")
+        }
+    });
     futures::future::try_join_all(future_list).await?;
     Ok(())
 }
@@ -97,7 +107,7 @@ fn total_count_draw(pb: ProgressBar, file_len: u64) {
             let total_count = TOTAL_COUNT.load(Ordering::SeqCst);
 
             if total_count >= file_len {
-                pb.finish_with_message("done");
+                pb.finish();
                 return;
             } else {
                 pb.set_position(total_count);
@@ -111,7 +121,7 @@ async fn download(uri: Uri,
                   file_name: String,
                   begin_index: u64, end_index: u64,
                   client: Client<HttpsConnector<HttpConnector>>,
-                  pb: ProgressBar) -> Result<()> {
+                  pb: Option<ProgressBar>) -> Result<()> {
     let mut count = 0;
 
     let mut file = tokio::fs::OpenOptions::new()
@@ -146,11 +156,17 @@ async fn download(uri: Uri,
                     let len = chunk.len() as u64;
                     count += len;
                     TOTAL_COUNT.fetch_add(len, Ordering::SeqCst);
-                    pb.set_position(count);
+
+                    if let Some(v) = &pb {
+                        v.set_position(count);
+                    }
                 }
                 None => {
                     file.flush().await?;
-                    pb.finish_with_message("done");
+
+                    if let Some(v) = &pb {
+                        v.finish();
+                    }
                     return Ok(());
                 }
             }
